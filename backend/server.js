@@ -48,9 +48,7 @@ const emitOnlineUsers = () => {
 const emitRooms = async () => {
   try {
     if (dbReady) {
-      const rooms = await ChatRoom.findAll({
-        attributes: ['id', 'roomName', 'createdBy', 'members', 'createdAt']
-      });
+      const rooms = await ChatRoom.findAll();
       io.emit('rooms_updated', rooms);
     }
   } catch (error) {
@@ -150,8 +148,8 @@ io.on('connection', (socket) => {
         const pendingRequests = room.pendingRequests || [];
         // Check if already requested
         if (!pendingRequests.some(r => r.userId === userId)) {
-          pendingRequests.push({ userId, username });
-          await room.update({ pendingRequests });
+          const updatedRequests = [...pendingRequests, { userId, username }];
+          await room.update({ pendingRequests: updatedRequests });
           emitRooms();
         }
       }
@@ -175,10 +173,13 @@ io.on('connection', (socket) => {
 
         // Add to members
         if (!members.includes(targetUserId)) {
-          members.push(targetUserId);
+          members = [...members, targetUserId];
         }
 
-        await room.update({ pendingRequests, members });
+        await room.update({ 
+          pendingRequests: [...pendingRequests], 
+          members: [...members] 
+        });
         emitRooms();
 
         // Broadcast to let the user know they were accepted
@@ -199,7 +200,7 @@ io.on('connection', (socket) => {
         let pendingRequests = room.pendingRequests || [];
         pendingRequests = pendingRequests.filter(r => r.userId !== targetUserId);
 
-        await room.update({ pendingRequests });
+        await room.update({ pendingRequests: [...pendingRequests] });
         emitRooms();
       }
     } catch (error) {
@@ -232,23 +233,30 @@ io.on('connection', (socket) => {
       if (!dbReady) return;
 
       const { roomId, userId, username, text, timestamp } = messageData;
+      const room = await ChatRoom.findByPk(roomId);
+      if (room) {
+        const members = room.members || [];
+        if (room.createdBy === userId || members.includes(userId)) {
+          const message = await Message.create({
+            roomId,
+            userId,
+            username,
+            text,
+            timestamp
+          });
 
-      const message = await Message.create({
-        roomId,
-        userId,
-        username,
-        text,
-        timestamp
-      });
-
-      io.to(roomId).emit('new_message', {
-        id: message.id,
-        userId,
-        username,
-        text,
-        timestamp,
-        roomId
-      });
+          io.to(roomId).emit('new_message', {
+            id: message.id,
+            userId,
+            username,
+            text,
+            timestamp,
+            roomId
+          });
+        } else {
+          socket.emit('error', { message: 'Access denied: You are not authorized to send messages to this room' });
+        }
+      }
     } catch (error) {
       socket.emit('error', { message: 'Failed to send message' });
     }
@@ -261,39 +269,66 @@ io.on('connection', (socket) => {
         return;
       }
 
-      const messages = await Message.findAll({
-        where: { roomId },
-        order: [['timestamp', 'ASC']],
-        limit: 50,
-        attributes: ['id', 'userId', 'username', 'text', 'timestamp', 'roomId']
-      });
+      // Verify the user connected via this socket is a member
+      const userSession = onlineUsers.get(socket.id);
+      if (!userSession) {
+        socket.emit('error', { message: 'Authentication required' });
+        return;
+      }
 
-      const formattedMessages = messages.map(msg => ({
-        id: msg.id,
-        userId: msg.userId,
-        username: msg.username,
-        text: msg.text,
-        timestamp: msg.timestamp,
-        roomId: msg.roomId
-      }));
+      const room = await ChatRoom.findByPk(roomId);
+      if (room) {
+        const members = room.members || [];
+        if (room.createdBy === userSession.userId || members.includes(userSession.userId)) {
+          const messages = await Message.findAll({
+            where: { roomId },
+            order: [['timestamp', 'ASC']],
+            limit: 50,
+            attributes: ['id', 'userId', 'username', 'text', 'timestamp', 'roomId']
+          });
 
-      socket.emit('room_messages', { roomId, messages: formattedMessages });
+          const formattedMessages = messages.map(msg => ({
+            id: msg.id,
+            userId: msg.userId,
+            username: msg.username,
+            text: msg.text,
+            timestamp: msg.timestamp,
+            roomId: msg.roomId
+          }));
+
+          socket.emit('room_messages', { roomId, messages: formattedMessages });
+        } else {
+          socket.emit('error', { message: 'Access denied: You are not authorized to view messages in this room' });
+        }
+      }
     } catch (error) {
       socket.emit('error', { message: 'Failed to fetch messages' });
     }
   });
 
-  socket.on('typing', (typingData) => {
+  socket.on('typing', async (typingData) => {
     const { roomId, userId, username } = typingData;
     if (roomId) {
-      socket.to(roomId).emit('user_typing', { userId, username, roomId });
+      const room = await ChatRoom.findByPk(roomId);
+      if (room) {
+        const members = room.members || [];
+        if (room.createdBy === userId || members.includes(userId)) {
+          socket.to(roomId).emit('user_typing', { userId, username, roomId });
+        }
+      }
     }
   });
 
-  socket.on('stop_typing', (typingData) => {
+  socket.on('stop_typing', async (typingData) => {
     const { roomId, userId } = typingData;
     if (roomId) {
-      socket.to(roomId).emit('user_stop_typing', { userId, roomId });
+      const room = await ChatRoom.findByPk(roomId);
+      if (room) {
+        const members = room.members || [];
+        if (room.createdBy === userId || members.includes(userId)) {
+          socket.to(roomId).emit('user_stop_typing', { userId, roomId });
+        }
+      }
     }
   });
 

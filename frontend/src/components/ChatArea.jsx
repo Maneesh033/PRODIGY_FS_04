@@ -282,7 +282,7 @@ export const ChatArea = ({ currentRoom, currentUser, onSelectRoom }) => {
       </div>
 
       {/* ADMIN PANEL: PENDING REQUESTS */}
-      {isCreator && room.pendingRequests && room.pendingRequests.length > 0 && (
+      {isCreator && (room.pendingRequests || []).length > 0 && (
         <div style={{
           margin: '1rem 1.5rem 0 1.5rem',
           padding: '1rem 1.25rem',
@@ -295,10 +295,10 @@ export const ChatArea = ({ currentRoom, currentUser, onSelectRoom }) => {
           boxShadow: '0 2px 6px rgba(245, 158, 11, 0.05)'
         }}>
           <h4 style={{ color: '#b45309', fontSize: '0.85rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '0.5rem', margin: 0 }}>
-            <span>🔔</span> Join Requests ({room.pendingRequests.length})
+            <span>🔔</span> Join Requests ({(room.pendingRequests || []).length})
           </h4>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-            {room.pendingRequests.map(req => (
+            {(room.pendingRequests || []).map(req => (
               <div
                 key={req.userId}
                 style={{
